@@ -105,6 +105,7 @@ dependencies = [
  "clap",
  "log",
  "tokio",
+ "trust-dns-proto",
  "trust-dns-server",
 ]
 

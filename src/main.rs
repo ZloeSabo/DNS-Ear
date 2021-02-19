@@ -25,7 +25,7 @@
 #![warn(missing_docs, clippy::dbg_macro, clippy::unimplemented)]
 #![recursion_limit = "128"]
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -47,6 +47,9 @@ use trust_dns_server::logger;
 use trust_dns_server::server::{Request, RequestHandler, ResponseHandler, ServerFuture};
 use trust_dns_server::store::file::{FileAuthority, FileConfig};
 
+use trust_dns_server::authority::LookupRecords;
+use trust_dns_server::proto::rr::Record;
+
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::future::Future;
@@ -60,7 +63,7 @@ use trust_dns_server::authority::{BoxedLookupFuture, EmptyLookup, LookupError, L
 use trust_dns_server::client::op::{Edns, Header, LowerQuery, MessageType, OpCode, ResponseCode};
 use trust_dns_server::client::rr::dnssec::{Algorithm, SupportedAlgorithms};
 use trust_dns_server::client::rr::rdata::opt::{EdnsCode, EdnsOption};
-use trust_dns_server::client::rr::{LowerName, RecordType};
+use trust_dns_server::client::rr::{LowerName, RData, RecordType};
 
 // argument name constants for the CLI options
 const QUIET_ARG: &str = "quiet";
@@ -157,7 +160,11 @@ impl RequestHandler for Ear {
             MessageType::Query => match request_message.op_code() {
                 OpCode::Query => {
                     debug!("query received: {}", request_message.id());
-                    return Box::pin(self.respond_with_stub(request_message, response_edns, response_handle));
+                    return Box::pin(self.respond_with_stub(
+                        request_message,
+                        response_edns,
+                        response_handle,
+                    ));
                 }
                 // OpCode::Update => {
                 //     debug!("update received: {}", request_message.id());
@@ -186,7 +193,7 @@ impl RequestHandler for Ear {
             //         ResponseCode::FormErr,
             //     ))
             // }
-            _ => Ok(())
+            _ => Ok(()),
         };
 
         if let Err(e) = result {
@@ -200,28 +207,60 @@ impl Ear {
     fn new() -> Self {
         Ear {}
     }
+
+    /// TODO
     pub fn respond_with_stub<R: ResponseHandler>(
         &self,
         request: MessageRequest,
         response_edns: Option<Edns>,
         response_handle: R,
     ) -> impl Future<Output = ()> + 'static {
-        let response = MessageResponseBuilder::new(Some(request.raw_queries()));
-        send_response(
-            response_edns
-                .as_ref()
-                .map(|arc| Borrow::<Edns>::borrow(arc).clone()),
-            response.error_msg(request.id(), request.op_code(), ResponseCode::NXDomain),
-            response_handle.clone(),
-        )
-        .map_err(|e| error!("failed to send response: {}", e))
-        .ok();
+        // let response = MessageResponseBuilder::new(Some(request.raw_queries()));
+        let mut response_header = Header::default();
+        response_header.set_id(request.id());
+        response_header.set_op_code(OpCode::Query);
+        response_header.set_message_type(MessageType::Response);
+        response_header.set_response_code(ResponseCode::NoError);
+        response_header.set_authoritative(true);
 
-        // asypc
+        for query in request.queries().iter() {
+
+            let original = query.original();
+            let rdata = match original.query_type() {
+                RecordType::A => RData::A(Ipv4Addr::LOCALHOST),
+                RecordType::AAAA => RData::AAAA(Ipv6Addr::LOCALHOST),
+                _ => RData::ZERO,
+            };
+
+            let mut record = Record::with(original.name().clone(), original.query_type(), 120);
+            record.set_rdata(rdata);
+
+
+            //TODO use actual dnssec
+            let rset = LookupRecords::new(false, SupportedAlgorithms::new(), Arc::new(record.into()));
+            let answers = Box::new(rset) as Box<dyn LookupObject>;
+
+            let empty = Box::new(AuthLookup::default()) as Box<dyn LookupObject>;
+
+            let response: MessageResponse = MessageResponseBuilder::new(Some(request.raw_queries()))
+                .build(
+                    response_header.clone(),
+                    answers.iter(), //TODO actual answers
+                    empty.iter(),
+                    empty.iter(),
+                    empty.iter(),
+                );
+
+            let result = send_response(response_edns.clone(), response, response_handle.clone());
+            if let Err(e) = result {
+                error!("error sending response: {}", e);
+            }
+        }
 
         Box::pin(async {})
     }
 
+    /// TODO
     pub fn lookup<R: ResponseHandler>(
         &self,
         request: MessageRequest,
@@ -237,7 +276,7 @@ impl Ear {
         //     //         .map(|authority| (i, authority.box_clone()))
         //     // })
         //     .collect::<Vec<_>>();
-        let queries_and_authorities:Vec<(usize, Box<dyn AuthorityObject>)> = vec!();
+        let queries_and_authorities: Vec<(usize, Box<dyn AuthorityObject>)> = vec![];
 
         if queries_and_authorities.is_empty() {
             let response = MessageResponseBuilder::new(Some(request.raw_queries()));
@@ -288,8 +327,11 @@ async fn lookup<R: ResponseHandler + Unpin>(
         //     sections.soa.iter(),
         //     sections.additionals.iter(),
         // );
-        let response = MessageResponseBuilder::new(Some(request.raw_queries())).error_msg(request.id(), request.op_code(), ResponseCode::NXDomain);
-
+        let response = MessageResponseBuilder::new(Some(request.raw_queries())).error_msg(
+            request.id(),
+            request.op_code(),
+            ResponseCode::NXDomain,
+        );
 
         let result = send_response(response_edns.clone(), response, response_handle.clone());
         if let Err(e) = result {
