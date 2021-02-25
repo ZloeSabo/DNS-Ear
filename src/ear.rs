@@ -1,33 +1,39 @@
-
 #![warn(missing_docs, clippy::dbg_macro, clippy::unimplemented)]
 
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::{Arc};
+// use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use std::fs::File;
+// use std::io::prelude::*;
+use std::io::{BufWriter, Result, Write};
+use std::path::Path;
 
 use log::{debug, error, trace, warn};
 
-
-use trust_dns_server::server::{Request, RequestHandler, ResponseHandler};
 use trust_dns_server::authority::LookupRecords;
 use trust_dns_server::proto::rr::Record;
+use trust_dns_server::server::{Request, RequestHandler, ResponseHandler};
 
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 
+use trust_dns_server::authority::LookupObject;
 use trust_dns_server::authority::{
     AuthLookup, MessageRequest, MessageResponse, MessageResponseBuilder,
 };
-use trust_dns_server::authority::{LookupObject};
-use trust_dns_server::client::op::{Edns, Header, MessageType, OpCode, ResponseCode};
+use trust_dns_server::client::op::{Edns, Header, MessageType, OpCode, ResponseCode, LowerQuery};
 use trust_dns_server::client::rr::dnssec::{Algorithm, SupportedAlgorithms};
-use trust_dns_server::client::rr::rdata::opt::{EdnsOption};
-use trust_dns_server::client::rr::{ RData, RecordType};
+use trust_dns_server::client::rr::rdata::opt::EdnsOption;
+use trust_dns_server::client::rr::{RData, RecordType};
 
-pub struct Ear {}
+pub struct Ear {
+    writer: Arc<Mutex<File>>,
+}
 
 impl RequestHandler for Ear {
-    type ResponseFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+    type ResponseFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
     /// Determines what needs to happen given the type of request, i.e. Query or Update.
     ///
@@ -40,7 +46,7 @@ impl RequestHandler for Ear {
         request: Request,
         mut response_handle: R,
     ) -> Self::ResponseFuture {
-        let request_message = request.message;
+        let request_message = &request.message;
         trace!("request: {:?}", request_message);
 
         let response_edns: Option<Edns>;
@@ -84,11 +90,8 @@ impl RequestHandler for Ear {
             MessageType::Query => match request_message.op_code() {
                 OpCode::Query => {
                     debug!("query received: {}", request_message.id());
-                    return Box::pin(self.respond_with_stub(
-                        request_message,
-                        response_edns,
-                        response_handle,
-                    ));
+                    self.respond_with_stub(request_message, response_edns, response_handle);
+                    Ok(())
                 }
                 c => {
                     warn!("unimplemented op_code: {:?}", c);
@@ -106,22 +109,28 @@ impl RequestHandler for Ear {
         if let Err(e) = result {
             error!("request failed: {}", e);
         }
-        Box::pin(async {})
+
+        Box::pin(log_usage(Arc::clone(&self.writer), &request))
     }
 }
 
 impl Ear {
-    pub fn new() -> Self {
-        Ear {}
+    pub fn new(file: File) -> Self {
+        // let path = Path::new(&path_str);
+        // let file = File::create(&path).expect("File could not be created");
+        let writer = Arc::new(Mutex::new(file));
+
+        Ear { writer }
     }
 
     /// TODO
     pub fn respond_with_stub<R: ResponseHandler>(
         &self,
-        request: MessageRequest,
+        request: &MessageRequest,
         response_edns: Option<Edns>,
         response_handle: R,
-    ) -> impl Future<Output = ()> + 'static {
+    ) /*-> impl Future<Output = ()> + 'static*/
+    {
         // let response = MessageResponseBuilder::new(Some(request.raw_queries()));
         let mut response_header = Header::default();
         response_header.set_id(request.id());
@@ -131,7 +140,6 @@ impl Ear {
         response_header.set_authoritative(true);
 
         for query in request.queries().iter() {
-
             let original = query.original();
             let rdata = match original.query_type() {
                 RecordType::A => RData::A(Ipv4Addr::LOCALHOST),
@@ -142,15 +150,15 @@ impl Ear {
             let mut record = Record::with(original.name().clone(), original.query_type(), 120);
             record.set_rdata(rdata);
 
-
             //TODO use actual dnssec
-            let rset = LookupRecords::new(false, SupportedAlgorithms::new(), Arc::new(record.into()));
+            let rset =
+                LookupRecords::new(false, SupportedAlgorithms::new(), Arc::new(record.into()));
             let answers = Box::new(rset) as Box<dyn LookupObject>;
 
             let empty = Box::new(AuthLookup::default()) as Box<dyn LookupObject>;
 
-            let response: MessageResponse = MessageResponseBuilder::new(Some(request.raw_queries()))
-                .build(
+            let response: MessageResponse =
+                MessageResponseBuilder::new(Some(request.raw_queries())).build(
                     response_header.clone(),
                     answers.iter(), //TODO actual answers
                     empty.iter(),
@@ -163,9 +171,14 @@ impl Ear {
                 error!("error sending response: {}", e);
             }
         }
-
-        Box::pin(async {})
     }
+
+    // async fn log_usage<'a>(&'a self, request: Request) {
+    //     let write = Arc::clone(&self.writer);
+    //     let mut w = write.lock().unwrap();
+    //     writeln!(w, "addr:{} query: {}", request.src, "wat");
+    //     println!("addr: {} query: {}", request.src, "wat");
+    // }
 }
 
 fn send_response<R: ResponseHandler>(
@@ -192,4 +205,33 @@ fn send_response<R: ResponseHandler>(
     }
 
     response_handle.send_response(response)
+}
+
+fn log_usage(
+    write: Arc<Mutex<File>>,
+    request: &Request,
+) -> impl Future<Output = ()> + 'static {
+    // let mut w = write.lock().unwrap();
+
+    // let line = format!("addr: {} query: {}", request.src, "wat");
+
+    // for query in queries.iter() {
+    //     println!("{}", &query);
+    //     println!("{}", &query.name());
+    // }
+    // writeln!(w, "addr:{} query: {}", request.src, "wat");
+    // println!("addr: {} query: {}", request.src, "wat");
+
+    write_to_logfile(write, request.message.queries().to_owned(), request.src.to_string())
+}
+
+async fn write_to_logfile(write: Arc<Mutex<File>>, queries: Vec<LowerQuery>, src: String) {
+    let mut w = write.lock().unwrap();
+    for query in queries.iter() {
+        writeln!(w, "addr: {} {}", src, query).unwrap();
+    }
+    // w.write_all(line.as_bytes());
+    // // w.flush();
+    // writeln!(w, "{}", line).unwrap();
+    // println!("{}", line);
 }

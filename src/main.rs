@@ -16,7 +16,10 @@
 
 mod ear;
 
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::path::Path;
 use std::time::Duration;
 
 use clap::{Arg, ArgMatches};
@@ -24,7 +27,7 @@ use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::runtime::{self};
 
-use clap::{app_from_crate, crate_authors, crate_version, crate_description, crate_name};
+use clap::{app_from_crate, crate_authors, crate_description, crate_name, crate_version};
 use log::{error, info, warn};
 
 use trust_dns_server::logger;
@@ -36,9 +39,12 @@ use ear::Ear;
 const VERBOSE_ARG: &str = "verbose";
 const PORT_ARG: &str = "port";
 const ADDR_ARG: &str = "addr";
+const LOGFILE_ARG: &str = "logfile";
+// const FILTER_ARG: &str = "filter";
 
 const DEFAULT_PORT: &str = "53";
 const DEFAULT_ADDRESS: &str = "0.0.0.0";
+const DEFAULT_LOGFILE: &str = "queries.log";
 
 /// Args struct for all options
 #[derive(Debug)]
@@ -46,6 +52,7 @@ struct Args {
     pub flag_verbose_num: u64,
     pub flag_port: Option<u16>,
     pub flag_addr: Option<Vec<IpAddr>>,
+    pub flag_logfile: String,
 }
 
 impl<'a> From<ArgMatches<'a>> for Args {
@@ -59,6 +66,10 @@ impl<'a> From<ArgMatches<'a>> for Args {
                 vals.map(|y| y.parse().expect(&format!("Bad address argument: {}", y)))
                     .collect::<Vec<_>>()
             }),
+            flag_logfile: matches
+                .value_of(LOGFILE_ARG)
+                .map(ToString::to_string)
+                .expect("Logfile required"),
         }
     }
 }
@@ -91,6 +102,14 @@ fn main() {
                 .value_name(ADDR_ARG)
                 .multiple(true),
         )
+        .arg(
+            Arg::with_name(LOGFILE_ARG)
+                .default_value(DEFAULT_LOGFILE)
+                .long(LOGFILE_ARG)
+                .short("l")
+                .help("Log file to write query log to.")
+                .value_name(LOGFILE_ARG)
+        )
         .get_matches();
 
     let args: Args = args.into();
@@ -118,7 +137,16 @@ fn main() {
         .flat_map(|x| (*x, listen_port).to_socket_addrs().unwrap())
         .collect();
 
-    let ear = Ear::new();
+    // let flag_logfile = args.flag_logfile;
+    let path = Path::new(&args.flag_logfile);
+    let logfile = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(&path)
+        .expect("Logfile is not accessible");
+
+    let ear = Ear::new(logfile);
     let mut server = ServerFuture::new(ear);
 
     // load all the listeners
