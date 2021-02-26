@@ -26,8 +26,8 @@ use trust_dns_server::client::rr::dnssec::{Algorithm, SupportedAlgorithms};
 use trust_dns_server::client::rr::rdata::opt::EdnsOption;
 use trust_dns_server::client::rr::{RData, RecordType};
 
-use regex::Regex;
 use lazy_static::lazy_static;
+use regex::Regex;
 
 const SUPPORTED_EDNS_VERSION: u8 = 0;
 
@@ -87,10 +87,10 @@ impl RequestHandler for Ear {
 
         let result = match (request_message.message_type(), request_message.op_code()) {
             (MessageType::Query, OpCode::Query) => {
-                    debug!("query received: {}", request_message.id());
-                    self.respond_with_stub(request_message, &response_edns, &response_handle);
-                    Ok(())
-            },
+                debug!("query received: {}", request_message.id());
+                self.respond_with_stub(request_message, &response_edns, &response_handle);
+                Ok(())
+            }
             (m, c) => {
                 warn!("unimplemented message_type: {:?} op_code: {:?}", m, c);
                 let response = MessageResponseBuilder::new(Some(request_message.raw_queries()));

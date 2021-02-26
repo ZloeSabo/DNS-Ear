@@ -66,8 +66,11 @@ impl<'a> From<ArgMatches<'a>> for Args {
                 .value_of(PORT_ARG)
                 .map(|s| u16::from_str_radix(s, 10).expect("bad port argument")),
             flag_addr: matches.values_of(ADDR_ARG).map(|vals| {
-                vals.map(|y| y.parse().unwrap_or_else(|_| panic!("Bad address argument: {}", y)))
-                    .collect::<Vec<_>>()
+                vals.map(|y| {
+                    y.parse()
+                        .unwrap_or_else(|_| panic!("Bad address argument: {}", y))
+                })
+                .collect::<Vec<_>>()
             }),
             flag_logfile: matches
                 .value_of(LOGFILE_ARG)
