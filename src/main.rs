@@ -9,6 +9,8 @@
 //!    -v, --version           Show the version of trust-dns
 //!    -p PORT, --port=PORT    Override the listening port (default 53)
 //!    -a ADDRESS, --addr      Override the listening address (default 0.0.0.0)
+//!    -l LOGFILE, --logfile   The logfile for storing queries
+//!    -f FILTER, --filter     Filter to apply for incoming queries
 //! ```
 
 #![warn(missing_docs, clippy::dbg_macro, clippy::unimplemented)]
@@ -16,7 +18,6 @@
 
 mod ear;
 
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
