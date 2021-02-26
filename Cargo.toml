@@ -17,4 +17,3 @@ lazy_static = "1.4.0"
 [dependencies.trust-dns-server]
 version = "0.20.0"
 # default-features = false
-
