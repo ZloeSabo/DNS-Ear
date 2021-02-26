@@ -28,8 +28,11 @@ use trust_dns_server::client::rr::dnssec::{Algorithm, SupportedAlgorithms};
 use trust_dns_server::client::rr::rdata::opt::EdnsOption;
 use trust_dns_server::client::rr::{RData, RecordType};
 
+use regex::Regex;
+
 pub struct Ear {
     writer: Arc<Mutex<File>>,
+    filter: Arc<Regex>,
 }
 
 impl RequestHandler for Ear {
@@ -110,17 +113,18 @@ impl RequestHandler for Ear {
             error!("request failed: {}", e);
         }
 
-        Box::pin(log_usage(Arc::clone(&self.writer), &request))
+        Box::pin(log_usage(Arc::clone(&self.writer), &request, Arc::clone(&self.filter)))
     }
 }
 
 impl Ear {
-    pub fn new(file: File) -> Self {
+    pub fn new(file: File, filter: Regex) -> Self {
         // let path = Path::new(&path_str);
         // let file = File::create(&path).expect("File could not be created");
         let writer = Arc::new(Mutex::new(file));
+        let filter = Arc::new(filter);
 
-        Ear { writer }
+        Ear { writer, filter }
     }
 
     /// TODO
@@ -140,6 +144,9 @@ impl Ear {
         response_header.set_authoritative(true);
 
         for query in request.queries().iter() {
+            if !self.filter.is_match(&format!("{}", query.name())) {
+                continue;
+            }
             let original = query.original();
             let rdata = match original.query_type() {
                 RecordType::A => RData::A(Ipv4Addr::LOCALHOST),
@@ -210,6 +217,7 @@ fn send_response<R: ResponseHandler>(
 fn log_usage(
     write: Arc<Mutex<File>>,
     request: &Request,
+    filter: Arc<Regex>
 ) -> impl Future<Output = ()> + 'static {
     // let mut w = write.lock().unwrap();
 
@@ -222,12 +230,15 @@ fn log_usage(
     // writeln!(w, "addr:{} query: {}", request.src, "wat");
     // println!("addr: {} query: {}", request.src, "wat");
 
-    write_to_logfile(write, request.message.queries().to_owned(), request.src.to_string())
+    write_to_logfile(write, filter, request.message.queries().to_owned(), request.src.to_string())
 }
 
-async fn write_to_logfile(write: Arc<Mutex<File>>, queries: Vec<LowerQuery>, src: String) {
+async fn write_to_logfile(write: Arc<Mutex<File>>, filter: Arc<Regex>, queries: Vec<LowerQuery>, src: String) {
     let mut w = write.lock().unwrap();
     for query in queries.iter() {
+        if !filter.is_match(&format!("{}", query.name())) {
+            continue;
+        }
         writeln!(w, "addr: {} {}", src, query).unwrap();
     }
     // w.write_all(line.as_bytes());

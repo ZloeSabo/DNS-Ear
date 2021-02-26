@@ -33,6 +33,8 @@ use log::{error, info, warn};
 use trust_dns_server::logger;
 use trust_dns_server::server::ServerFuture;
 
+use regex::Regex;
+
 use ear::Ear;
 
 // argument name constants for the CLI options
@@ -40,7 +42,7 @@ const VERBOSE_ARG: &str = "verbose";
 const PORT_ARG: &str = "port";
 const ADDR_ARG: &str = "addr";
 const LOGFILE_ARG: &str = "logfile";
-// const FILTER_ARG: &str = "filter";
+const FILTER_ARG: &str = "filter";
 
 const DEFAULT_PORT: &str = "53";
 const DEFAULT_ADDRESS: &str = "0.0.0.0";
@@ -53,6 +55,7 @@ struct Args {
     pub flag_port: Option<u16>,
     pub flag_addr: Option<Vec<IpAddr>>,
     pub flag_logfile: String,
+    pub flag_filter: String,
 }
 
 impl<'a> From<ArgMatches<'a>> for Args {
@@ -70,6 +73,10 @@ impl<'a> From<ArgMatches<'a>> for Args {
                 .value_of(LOGFILE_ARG)
                 .map(ToString::to_string)
                 .expect("Logfile required"),
+            flag_filter: matches
+                .value_of(FILTER_ARG)
+                .map(ToString::to_string)
+                .expect("Filter required"),
         }
     }
 }
@@ -110,6 +117,13 @@ fn main() {
                 .help("Log file to write query log to.")
                 .value_name(LOGFILE_ARG)
         )
+        .arg(
+            Arg::with_name(FILTER_ARG)
+                .long(FILTER_ARG)
+                .short("f")
+                .help("Filter queries by regex.")
+                .value_name(FILTER_ARG)
+        )
         .get_matches();
 
     let args: Args = args.into();
@@ -137,6 +151,8 @@ fn main() {
         .flat_map(|x| (*x, listen_port).to_socket_addrs().unwrap())
         .collect();
 
+    let filter: Regex = Regex::new(&args.flag_filter).unwrap();
+
     // let flag_logfile = args.flag_logfile;
     let path = Path::new(&args.flag_logfile);
     let logfile = OpenOptions::new()
@@ -146,7 +162,7 @@ fn main() {
         .open(&path)
         .expect("Logfile is not accessible");
 
-    let ear = Ear::new(logfile);
+    let ear = Ear::new(logfile, filter);
     let mut server = ServerFuture::new(ear);
 
     // load all the listeners
