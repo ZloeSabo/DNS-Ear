@@ -1,4 +1,5 @@
-#![warn(missing_docs, clippy::dbg_macro, clippy::unimplemented)]
+#![warn(missing_docs)]
+#![deny(clippy::all)]
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
@@ -31,12 +32,12 @@ use lazy_static::lazy_static;
 const SUPPORTED_EDNS_VERSION: u8 = 0;
 
 lazy_static! {
-    static ref SUPPORTED_EDNS_ALGORITHMS: SupportedAlgorithms = SupportedAlgorithms::from_vec(&vec!(
+    static ref SUPPORTED_EDNS_ALGORITHMS: SupportedAlgorithms = SupportedAlgorithms::from_vec(&[
         Algorithm::RSASHA256,
         Algorithm::ECDSAP256SHA256,
         Algorithm::ECDSAP384SHA384,
         Algorithm::ED25519,
-    ));
+    ]);
 }
 
 pub struct Ear {
@@ -53,6 +54,7 @@ impl RequestHandler for Ear {
     ///
     /// * `request` - the requested action to perform.
     /// * `response_handle` - sink for the response message to be sent
+    #[allow(clippy::similar_names)]
     fn handle_request<R: ResponseHandler>(
         &self,
         request: Request,
@@ -69,7 +71,9 @@ impl RequestHandler for Ear {
             resp_edns.set_max_payload(req_edns.max_payload().max(512));
             resp_edns.set_version(SUPPORTED_EDNS_VERSION);
 
-            // There probably should be a edns version check, maybe not
+            // There probably should be a edns version check, but seems that actual
+            // servers are ignoring invalid version anyway
+
             let dau = EdnsOption::DAU(*SUPPORTED_EDNS_ALGORITHMS);
             let dhu = EdnsOption::DHU(*SUPPORTED_EDNS_ALGORITHMS);
 
@@ -81,24 +85,22 @@ impl RequestHandler for Ear {
             response_edns = None;
         }
 
-        let result = match request_message.message_type() {
-            MessageType::Query => match request_message.op_code() {
-                OpCode::Query => {
+        let result = match (request_message.message_type(), request_message.op_code()) {
+            (MessageType::Query, OpCode::Query) => {
                     debug!("query received: {}", request_message.id());
-                    self.respond_with_stub(request_message, response_edns, response_handle);
+                    self.respond_with_stub(request_message, &response_edns, &response_handle);
                     Ok(())
-                }
-                c => {
-                    warn!("unimplemented op_code: {:?}", c);
-                    let response = MessageResponseBuilder::new(Some(request_message.raw_queries()));
-                    response_handle.send_response(response.error_msg(
-                        request_message.id(),
-                        request_message.op_code(),
-                        ResponseCode::NotImp,
-                    ))
-                }
             },
-            _ => Ok(()),
+            (m, c) => {
+                warn!("unimplemented message_type: {:?} op_code: {:?}", m, c);
+                let response = MessageResponseBuilder::new(Some(request_message.raw_queries()));
+                println!("wat");
+                response_handle.send_response(response.error_msg(
+                    request_message.id(),
+                    request_message.op_code(),
+                    ResponseCode::NotImp,
+                ))
+            }
         };
 
         if let Err(e) = result {
@@ -127,8 +129,8 @@ impl Ear {
     pub fn respond_with_stub<R: ResponseHandler>(
         &self,
         request: &MessageRequest,
-        response_edns: Option<Edns>,
-        response_handle: R,
+        response_edns: &Option<Edns>,
+        response_handle: &R,
     ) {
         let mut response_header = Header::default();
         response_header.set_id(request.id());
@@ -220,7 +222,7 @@ async fn write_to_logfile(
     src: String,
 ) {
     let mut w = write.lock().unwrap();
-    for query in queries.iter() {
+    for query in &queries {
         if !filter.is_match(&query.name().to_string()) {
             continue;
         }

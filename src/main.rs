@@ -13,8 +13,7 @@
 //!    -f FILTER, --filter     Filter to apply for incoming queries
 //! ```
 
-#![warn(missing_docs, clippy::dbg_macro, clippy::unimplemented)]
-#![recursion_limit = "128"]
+#![warn(missing_docs)]
 
 mod ear;
 
@@ -67,7 +66,7 @@ impl<'a> From<ArgMatches<'a>> for Args {
                 .value_of(PORT_ARG)
                 .map(|s| u16::from_str_radix(s, 10).expect("bad port argument")),
             flag_addr: matches.values_of(ADDR_ARG).map(|vals| {
-                vals.map(|y| y.parse().expect(&format!("Bad address argument: {}", y)))
+                vals.map(|y| y.parse().unwrap_or_else(|_| panic!("Bad address argument: {}", y)))
                     .collect::<Vec<_>>()
             }),
             flag_logfile: matches
@@ -82,8 +81,8 @@ impl<'a> From<ArgMatches<'a>> for Args {
     }
 }
 
-fn main() {
-    let args = app_from_crate!()
+fn get_args() -> Args {
+    app_from_crate!()
         .arg(
             Arg::with_name(VERBOSE_ARG)
                 .env("VERBOSE")
@@ -125,9 +124,12 @@ fn main() {
                 .help("Filter queries by regex.")
                 .value_name(FILTER_ARG)
         )
-        .get_matches();
+        .get_matches()
+        .into()
+}
 
-    let args: Args = args.into();
+fn main() {
+    let args: Args = get_args();
 
     match args.flag_verbose_num {
         1 => logger::default(),
