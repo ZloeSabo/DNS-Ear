@@ -26,6 +26,7 @@ use trust_dns_server::client::rr::dnssec::{Algorithm, SupportedAlgorithms};
 use trust_dns_server::client::rr::rdata::opt::EdnsOption;
 use trust_dns_server::client::rr::{RData, RecordType};
 
+use chrono::Local;
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -226,6 +227,13 @@ async fn write_to_logfile(
         if !filter.is_match(&query.name().to_string()) {
             continue;
         }
-        writeln!(w, "addr: {} {}", src, query).unwrap();
+        writeln!(
+            w,
+            "{} addr: {} {}",
+            Local::now().format("%d-%b-%Y %H:%M:%S"),
+            src,
+            query
+        )
+        .unwrap();
     }
 }
